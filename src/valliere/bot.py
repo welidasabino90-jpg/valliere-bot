@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from .config import ConfigurationError, Settings
 
@@ -286,6 +287,89 @@ def create_bot(settings: Settings):
             f"**{character.display_name}** agora está em **{location.room}**.",
             ephemeral=True,
         )
+
+    @bot.tree.command(
+        name="diagnosticoia",
+        description="Testa a resposta de uma pessoa de IA e mostra a etapa que falhou.",
+    )
+    @app_commands.describe(personagem="ID canônico, ex.: olivia-bennett")
+    async def diagnosticoia(interaction, personagem: str):
+        if not await guard(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        stage = "local"
+        try:
+            location = bot.location_by_channel.get(interaction.channel_id)
+            if location is None or location.kind != ChannelKind.PHYSICAL:
+                await interaction.followup.send(
+                    "Este canal não é um local físico reconhecido. Use o diagnóstico no #recepção.",
+                    ephemeral=True,
+                )
+                return
+
+            stage = "estado da cidade"
+            state = await bot.world_service.world()
+            if state.city_status != CityStatus.ACTIVE:
+                await interaction.followup.send(
+                    "A cidade está dormindo. Use /cidadeacorda antes do teste.",
+                    ephemeral=True,
+                )
+                return
+
+            stage = "personagem e localização"
+            characters = {item.character_id: item for item in await bot.store.list_characters()}
+            character = characters.get(personagem.strip().casefold())
+            if character is None:
+                await interaction.followup.send("Personagem não encontrado.", ephemeral=True)
+                return
+            if character.actor_kind != ActorKind.AI:
+                await interaction.followup.send(
+                    "Personagens humanas não podem ser testadas pela IA.", ephemeral=True
+                )
+                return
+            if character.current_location_key != location.location_key:
+                await interaction.followup.send(
+                    f"**{character.display_name}** não está neste local. Use /moveria aqui primeiro.",
+                    ephemeral=True,
+                )
+                return
+            if not bot.ai_service.enabled:
+                await interaction.followup.send(
+                    "Groq não está configurada na hospedagem (GROQ_API_KEY ausente).",
+                    ephemeral=True,
+                )
+                return
+
+            stage = "leitura da memória"
+            memories = await bot.store.list_memories(character.character_id, limit=8)
+            stage = "resposta da Groq"
+            reply = await bot.ai_service.reply(
+                character=character,
+                location=location,
+                world=state,
+                human_name=interaction.user.display_name,
+                human_message=f"{character.display_name}, bom dia! Como estão as coisas por aqui hoje?",
+                recent_memory=memories,
+            )
+            stage = "envio pelo webhook"
+            payload = bot.webhook_service.build_payload(character, location, reply)
+            await bot.webhook_service.send(interaction.channel, payload)
+            await interaction.followup.send(
+                f"✅ **{character.display_name} respondeu no canal.** "
+                "Local, cidade, memória, Groq e webhook funcionaram. "
+                "Agora teste chamando a personagem em uma mensagem comum.",
+                ephemeral=True,
+            )
+        except Exception as exc:
+            logger.exception("Diagnóstico de IA falhou na etapa %s: %s", stage, exc)
+            # Não devolver detalhes da API, prompts ou credenciais ao Discord.
+            groq_status = re.search(r"Groq recusou a solicitação \((\d{3})\)", str(exc))
+            detail = f" (HTTP {groq_status.group(1)})" if groq_status else ""
+            await interaction.followup.send(
+                f"❌ Falha na etapa **{stage}**{detail}. "
+                "Nenhuma chave ou informação interna foi exibida.",
+                ephemeral=True,
+            )
 
     @bot.tree.command(
         name="testarwebhook",
