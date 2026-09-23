@@ -139,7 +139,7 @@ def create_bot(settings: Settings):
                     location_key=location.location_key,
                     importance=1,
                 )
-            except (AIError, Exception) as exc:
+            except Exception as exc:
                 logger.exception("Falha na reação de %s: %s", character.character_id, exc)
 
     bot = ValliereBot()
