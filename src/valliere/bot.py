@@ -367,6 +367,8 @@ def create_bot(settings: Settings):
                 detail = f" (HTTP {exc.status_code})"
                 if exc.error_code:
                     detail += f" — código: `{exc.error_code}`"
+                if exc.response_kind:
+                    detail += f" — formato: {exc.response_kind}"
             await interaction.followup.send(
                 f"❌ Falha na etapa **{stage}**{detail}. "
                 "Nenhuma chave ou informação interna foi exibida.",
