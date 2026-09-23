@@ -207,6 +207,48 @@ class SupabaseStore:
             .execute()
         )
 
+    async def add_memory(
+        self,
+        character_id: str,
+        content: str,
+        *,
+        memory_type: str = "interaction",
+        source_character_id: str | None = None,
+        location_key: str | None = None,
+        importance: int = 1,
+    ) -> None:
+        cleaned = " ".join(content.split())[:1800]
+        if not cleaned:
+            return
+        payload = {
+            "character_id": character_id,
+            "memory_type": memory_type,
+            "content": cleaned,
+            "source_character_id": source_character_id,
+            "location_key": location_key,
+            "importance": max(1, min(int(importance), 5)),
+        }
+        await self._run(
+            lambda: self.client.table("character_memories").insert(payload).execute()
+        )
+
+    async def list_memories(
+        self,
+        character_id: str,
+        *,
+        limit: int = 8,
+    ) -> tuple[str, ...]:
+        response = await self._run(
+            lambda: self.client.table("character_memories")
+            .select("content")
+            .eq("character_id", character_id)
+            .order("created_at", desc=True)
+            .limit(max(1, min(limit, 20)))
+            .execute()
+        )
+        rows = response.data or []
+        return tuple(str(row["content"]) for row in reversed(rows) if row.get("content"))
+
     @staticmethod
     def _character_from_row(
         row: dict[str, Any],
