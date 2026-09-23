@@ -251,6 +251,41 @@ def create_bot(settings: Settings):
             return
         await interaction.response.send_message(f"🌦️ Clima atualizado: **{state.weather}**")
 
+    @bot.tree.command(name="moveria", description="Move uma pessoa de IA para este local físico.")
+    @app_commands.describe(personagem="ID canônico, ex.: olivia-bennett")
+    async def moveria(interaction, personagem: str):
+        if not await guard(interaction):
+            return
+        location = bot.location_by_channel.get(interaction.channel_id)
+        if location is None or location.kind != ChannelKind.PHYSICAL:
+            await interaction.response.send_message(
+                "Use este comando no local físico de destino.", ephemeral=True
+            )
+            return
+        characters = {item.character_id: item for item in await bot.store.list_characters()}
+        character = characters.get(personagem.strip().casefold())
+        if character is None:
+            await interaction.response.send_message("Personagem não encontrado.", ephemeral=True)
+            return
+        if character.actor_kind != ActorKind.AI:
+            await interaction.response.send_message(
+                "Bloqueado: personagens humanas são controladas apenas pelas jogadoras.",
+                ephemeral=True,
+            )
+            return
+        from dataclasses import replace
+        await bot.store.save_character(
+            replace(
+                character,
+                current_location_key=location.location_key,
+                activity=f"presente em {location.room}",
+            )
+        )
+        await interaction.response.send_message(
+            f"**{character.display_name}** agora está em **{location.room}**.",
+            ephemeral=True,
+        )
+
     @bot.tree.command(
         name="testarwebhook",
         description="Testa a identidade visual de uma pessoa de IA neste local.",
