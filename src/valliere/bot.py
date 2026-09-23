@@ -79,6 +79,7 @@ def create_bot(settings: Settings):
                 for channel in guild.text_channels
             )
             await self.world_service.sync_map(locations)
+            await self.world_service.seed_ai_locations()
             self.location_by_channel = {item.channel_id: item for item in locations}
             logger.info("Mapa sincronizado: %d canais reconhecidos.", len(locations))
 
