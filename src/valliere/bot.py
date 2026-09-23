@@ -24,6 +24,7 @@ def create_bot(settings: Settings):
     from .catalog import initial_characters
     from .map import classify_channel
     from .models import ActorKind, ChannelKind, CityStatus
+    from .services.ai import GroqService
     from .services.webhooks import WebhookService
     from .services.world import DomainError, WorldService
     from .stores.supabase import SupabaseStore
@@ -44,6 +45,7 @@ def create_bot(settings: Settings):
             )
             self.world_service = WorldService(self.store, settings.discord_guild_id)
             self.webhook_service = WebhookService()
+            self.ai_service = GroqService(settings.groq_api_key, settings.groq_model)
             self.location_by_channel: dict[int, object] = {}
             self._sleep_notice_channels: set[int] = set()
 
@@ -84,14 +86,61 @@ def create_bot(settings: Settings):
             if location is None or location.kind != ChannelKind.PHYSICAL:
                 return
             state = await self.world_service.world()
-            if state.city_status != CityStatus.SLEEPING:
-                self._sleep_notice_channels.discard(message.channel.id)
+            if state.city_status == CityStatus.SLEEPING:
+                if message.channel.id not in self._sleep_notice_channels:
+                    self._sleep_notice_channels.add(message.channel.id)
+                    await message.channel.send(
+                        "🌙 **A cidade está em período de descanso. Este local físico está fechado.**"
+                    )
                 return
-            if message.channel.id not in self._sleep_notice_channels:
-                self._sleep_notice_channels.add(message.channel.id)
-                await message.channel.send(
-                    "🌙 **A cidade está em período de descanso. Este local físico está fechado.**"
+
+            self._sleep_notice_channels.discard(message.channel.id)
+            if not self.ai_service.enabled:
+                return
+
+            characters = await self.store.list_characters()
+            present = [
+                item
+                for item in characters
+                if item.actor_kind == ActorKind.AI
+                and item.current_location_key == location.location_key
+            ]
+            if not present:
+                return
+
+            # Presença não significa participação: uma mensagem comum não faz
+            # todos os presentes responderem. Menção pelo nome dá iniciativa.
+            normalized = message.content.casefold()
+            addressed = [
+                item for item in present
+                if item.display_name.casefold().split()[0] in normalized
+                or item.display_name.casefold() in normalized
+            ]
+            if not addressed:
+                return
+
+            character = addressed[0]
+            memories = await self.store.list_memories(character.character_id, limit=8)
+            try:
+                reply = await self.ai_service.reply(
+                    character=character,
+                    location=location,
+                    world=state,
+                    human_name=message.author.display_name,
+                    human_message=message.content,
+                    recent_memory=memories,
                 )
+                payload = self.webhook_service.build_payload(character, location, reply)
+                await self.webhook_service.send(message.channel, payload)
+                await self.store.add_memory(
+                    character.character_id,
+                    f"{message.author.display_name} disse: {message.content}",
+                    source_character_id=f"discord:{message.author.id}",
+                    location_key=location.location_key,
+                    importance=1,
+                )
+            except Exception as exc:
+                logger.exception("Falha na reação de %s: %s", character.character_id, exc)
 
     bot = ValliereBot()
 
@@ -167,12 +216,13 @@ def create_bot(settings: Settings):
     async def cidadedorme(interaction):
         if not await guard(interaction):
             return
+        await interaction.response.defer()
         try:
             await bot.world_service.sleep_city()
         except DomainError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.followup.send(str(exc), ephemeral=True)
             return
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "🌙 **VALLIÈRE — MADRUGADA**\n\n"
             "As luzes dos estabelecimentos começam a se apagar, o movimento nas ruas "
             "diminui e VALLIÈRE encerra mais um dia.\n\n"
@@ -200,6 +250,41 @@ def create_bot(settings: Settings):
             await interaction.response.send_message(str(exc), ephemeral=True)
             return
         await interaction.response.send_message(f"🌦️ Clima atualizado: **{state.weather}**")
+
+    @bot.tree.command(name="moveria", description="Move uma pessoa de IA para este local físico.")
+    @app_commands.describe(personagem="ID canônico, ex.: olivia-bennett")
+    async def moveria(interaction, personagem: str):
+        if not await guard(interaction):
+            return
+        location = bot.location_by_channel.get(interaction.channel_id)
+        if location is None or location.kind != ChannelKind.PHYSICAL:
+            await interaction.response.send_message(
+                "Use este comando no local físico de destino.", ephemeral=True
+            )
+            return
+        characters = {item.character_id: item for item in await bot.store.list_characters()}
+        character = characters.get(personagem.strip().casefold())
+        if character is None:
+            await interaction.response.send_message("Personagem não encontrado.", ephemeral=True)
+            return
+        if character.actor_kind != ActorKind.AI:
+            await interaction.response.send_message(
+                "Bloqueado: personagens humanas são controladas apenas pelas jogadoras.",
+                ephemeral=True,
+            )
+            return
+        from dataclasses import replace
+        await bot.store.save_character(
+            replace(
+                character,
+                current_location_key=location.location_key,
+                activity=f"presente em {location.room}",
+            )
+        )
+        await interaction.response.send_message(
+            f"**{character.display_name}** agora está em **{location.room}**.",
+            ephemeral=True,
+        )
 
     @bot.tree.command(
         name="testarwebhook",

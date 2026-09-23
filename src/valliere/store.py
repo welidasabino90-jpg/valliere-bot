@@ -22,3 +22,18 @@ class ValliereStore(Protocol):
 
     async def save_character(self, character: Character) -> None: ...
 
+    async def add_memory(
+        self,
+        character_id: str,
+        content: str,
+        *,
+        memory_type: str = "interaction",
+        source_character_id: str | None = None,
+        location_key: str | None = None,
+        importance: int = 1,
+    ) -> None: ...
+
+    async def list_memories(
+        self, character_id: str, *, limit: int = 8
+    ) -> tuple[str, ...]: ...
+
