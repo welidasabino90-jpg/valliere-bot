@@ -34,6 +34,8 @@ class Settings:
     celine_user_id: int | None = None
     emma_user_id: int | None = None
     briana_user_id: int | None = None
+    groq_api_key: str | None = None
+    groq_model: str = "llama-3.3-70b-versatile"
 
     @property
     def authorized_human_ids(self) -> frozenset[int]:
@@ -57,5 +59,7 @@ class Settings:
             celine_user_id=_optional_int("DISCORD_CELINE_USER_ID"),
             emma_user_id=_optional_int("DISCORD_EMMA_USER_ID"),
             briana_user_id=_optional_int("DISCORD_BRIANA_USER_ID"),
+            groq_api_key=os.getenv("GROQ_API_KEY", "").strip() or None,
+            groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip() or "llama-3.3-70b-versatile",
         )
 
