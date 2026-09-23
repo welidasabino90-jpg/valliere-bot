@@ -34,6 +34,7 @@ def create_bot(settings: Settings):
             intents = discord.Intents.default()
             intents.guilds = True
             intents.messages = True
+            intents.message_content = True
             super().__init__(
                 command_prefix=commands.when_mentioned,
                 intents=intents,
