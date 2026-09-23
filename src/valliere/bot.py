@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 
 from .config import ConfigurationError, Settings
 
@@ -25,7 +24,7 @@ def create_bot(settings: Settings):
     from .catalog import initial_characters
     from .map import classify_channel
     from .models import ActorKind, ChannelKind, CityStatus
-    from .services.ai import GroqService
+    from .services.ai import AIError, GroqService
     from .services.webhooks import WebhookService
     from .services.world import DomainError, WorldService
     from .stores.supabase import SupabaseStore
@@ -362,9 +361,12 @@ def create_bot(settings: Settings):
             )
         except Exception as exc:
             logger.exception("Diagnóstico de IA falhou na etapa %s: %s", stage, exc)
-            # Não devolver detalhes da API, prompts ou credenciais ao Discord.
-            groq_status = re.search(r"Groq recusou a solicitação \((\d{3})\)", str(exc))
-            detail = f" (HTTP {groq_status.group(1)})" if groq_status else ""
+            # Mostrar apenas código estruturado da API, nunca sua resposta bruta.
+            detail = ""
+            if isinstance(exc, AIError) and exc.status_code:
+                detail = f" (HTTP {exc.status_code})"
+                if exc.error_code:
+                    detail += f" — código: `{exc.error_code}`"
             await interaction.followup.send(
                 f"❌ Falha na etapa **{stage}**{detail}. "
                 "Nenhuma chave ou informação interna foi exibida.",

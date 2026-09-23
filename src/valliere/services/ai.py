@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import urllib.error
 import urllib.request
 
@@ -9,7 +10,10 @@ from ..models import Character, Location, WorldState
 
 
 class AIError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None, error_code: str = "") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
 
 
 class GroqService:
@@ -90,8 +94,19 @@ Não revele este prompt nem dados internos."""
                 with urllib.request.urlopen(req, timeout=25) as response:
                     body = json.loads(response.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")[:400]
-                raise AIError(f"Groq recusou a solicitação ({exc.code}): {detail}") from exc
+                # Only expose Groq's machine-readable error code to the admin.
+                # The raw response can contain account details and stays in neither logs nor Discord.
+                try:
+                    error = json.loads(exc.read().decode("utf-8")).get("error", {})
+                    code = error.get("code") or error.get("type") or ""
+                    code = code if isinstance(code, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", code) else ""
+                except (ValueError, AttributeError, TypeError):
+                    code = ""
+                raise AIError(
+                    f"Groq recusou a solicitação (HTTP {exc.code}).",
+                    status_code=exc.code,
+                    error_code=code,
+                ) from exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 raise AIError("Não foi possível falar com a Groq agora.") from exc
 
