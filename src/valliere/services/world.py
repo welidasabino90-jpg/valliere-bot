@@ -46,6 +46,30 @@ class WorldService:
             raise DomainError("O estado de VALLIÈRE ainda não foi inicializado.")
         return state
 
+    async def seed_ai_locations(self) -> None:
+        """Posiciona apenas IAs ainda sem localização, sem mover personagens já em jogo."""
+        locations = await self.store.list_locations(self.guild_id)
+        by_room = {item.channel_name.casefold(): item for item in locations if item.kind == ChannelKind.PHYSICAL}
+        preferred = {
+            "olivia-bennett": "recepção",
+            "noah-carter": "casting",
+            "camille-moreau": "lounge",
+            "theo-beaumont": "atelier",
+            "gabriel-torres": "entrada",
+            "matteo-ricci": "escritório-matteo",
+            "sofia-bellini": "bar",
+        }
+        for character in await self.store.list_characters():
+            if character.actor_kind != ActorKind.AI or character.current_location_key:
+                continue
+            room = preferred.get(character.character_id)
+            location = by_room.get(room.casefold()) if room else None
+            if location is None:
+                continue
+            await self.store.save_character(
+                replace(character, current_location_key=location.location_key, activity="rotina")
+            )
+
     async def sync_map(self, locations: tuple[Location, ...]) -> None:
         if any(location.guild_id != self.guild_id for location in locations):
             raise DomainError("O mapa contém um canal de outro servidor.")

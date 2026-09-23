@@ -207,6 +207,45 @@ class SupabaseStore:
             .execute()
         )
 
+    async def get_character(self, character_id: str) -> Character | None:
+        response = await self._run(
+            lambda: self.client.table("characters")
+            .select("*").eq("character_id", character_id).limit(1).execute()
+        )
+        rows = response.data or []
+        return self._character_from_row(rows[0]) if rows else None
+
+    async def memories_for(self, guild_id: int, character_id: str, limit: int = 8) -> tuple[str, ...]:
+        response = await self._run(
+            lambda: self.client.table("memories")
+            .select("content").eq("guild_id", guild_id)
+            .eq("character_id", character_id)
+            .order("created_at", desc=True).limit(limit).execute()
+        )
+        return tuple(row["content"] for row in reversed(response.data or []))
+
+    async def add_memory(
+        self,
+        guild_id: int,
+        character_id: str,
+        content: str,
+        *,
+        source_character_id: str | None = None,
+        location_key: str | None = None,
+        kind: str = "conversa",
+        importance: int = 1,
+    ) -> None:
+        payload = {
+            "guild_id": guild_id,
+            "character_id": character_id,
+            "kind": kind,
+            "content": content[:1000],
+            "source_character_id": source_character_id,
+            "location_key": location_key,
+            "importance": max(1, min(5, importance)),
+        }
+        await self._run(lambda: self.client.table("memories").insert(payload).execute())
+
     @staticmethod
     def _character_from_row(
         row: dict[str, Any],

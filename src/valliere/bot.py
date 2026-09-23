@@ -25,6 +25,7 @@ def create_bot(settings: Settings):
     from .map import classify_channel
     from .models import ActorKind, ChannelKind, CityStatus
     from .services.webhooks import WebhookService
+    from .services.ai import GroqService, SceneContext, AIError
     from .services.world import DomainError, WorldService
     from .stores.supabase import SupabaseStore
 
@@ -44,6 +45,10 @@ def create_bot(settings: Settings):
             )
             self.world_service = WorldService(self.store, settings.discord_guild_id)
             self.webhook_service = WebhookService()
+            self.ai_service = (
+                GroqService(settings.groq_api_key, settings.groq_model)
+                if settings.groq_api_key else None
+            )
             self.location_by_channel: dict[int, object] = {}
             self._sleep_notice_channels: set[int] = set()
 
@@ -74,6 +79,7 @@ def create_bot(settings: Settings):
                 for channel in guild.text_channels
             )
             await self.world_service.sync_map(locations)
+            await self.world_service.seed_ai_locations()
             self.location_by_channel = {item.channel_id: item for item in locations}
             logger.info("Mapa sincronizado: %d canais reconhecidos.", len(locations))
 
@@ -86,12 +92,67 @@ def create_bot(settings: Settings):
             state = await self.world_service.world()
             if state.city_status != CityStatus.SLEEPING:
                 self._sleep_notice_channels.discard(message.channel.id)
+                await self._handle_ai_mentions(message, location, state)
                 return
             if message.channel.id not in self._sleep_notice_channels:
                 self._sleep_notice_channels.add(message.channel.id)
                 await message.channel.send(
                     "🌙 **A cidade está em período de descanso. Este local físico está fechado.**"
                 )
+
+        async def _handle_ai_mentions(self, message, location, state) -> None:
+            if self.ai_service is None:
+                return
+            content = message.content.strip()
+            if not content:
+                return
+            characters = await self.store.list_characters()
+            present = [
+                item for item in characters
+                if item.actor_kind == ActorKind.AI
+                and item.current_location_key == location.location_key
+            ]
+            if not present:
+                return
+
+            # Fase 2 inicial: a IA só responde quando seu nome é mencionado.
+            # Isso evita que todas as pessoas presentes invadam a conversa.
+            lowered = content.casefold()
+            target = next(
+                (
+                    item for item in present
+                    if item.display_name.casefold() in lowered
+                    or item.display_name.split()[0].casefold() in lowered
+                ),
+                None,
+            )
+            if target is None:
+                return
+
+            memories = await self.store.memories_for(
+                settings.discord_guild_id, target.character_id
+            )
+            scene = SceneContext(
+                world=state,
+                location=location,
+                character=target,
+                speaker_name=message.author.display_name,
+                message=content,
+                memories=memories,
+            )
+            try:
+                reply = await self.ai_service.reply(scene)
+                payload = self.webhook_service.build_payload(target, location, reply)
+                await self.webhook_service.send(message.channel, payload)
+                await self.store.add_memory(
+                    settings.discord_guild_id,
+                    target.character_id,
+                    f"{message.author.display_name}: {content}",
+                    location_key=location.location_key,
+                )
+            except (AIError, discord.Forbidden, discord.HTTPException):
+                logger.exception("Falha ao gerar/enviar resposta de %s", target.character_id)
+
 
     bot = ValliereBot()
 
