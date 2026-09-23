@@ -24,7 +24,7 @@ def create_bot(settings: Settings):
     from .catalog import initial_characters
     from .map import classify_channel
     from .models import ActorKind, ChannelKind, CityStatus
-    from .services.ai import AIError, GroqService
+    from .services.ai import GroqService
     from .services.webhooks import WebhookService
     from .services.world import DomainError, WorldService
     from .stores.supabase import SupabaseStore
