@@ -180,6 +180,9 @@ def create_bot(settings: Settings):
             # Uma pessoa pode chamar um NPC de outra sala diretamente neste
             # canal. O local persistido é trocado antes de a pessoa responder.
             normalized = message.content.casefold()
+            is_phone_call = any(word in normalized for word in ("ligo", "telefone", "ramal", "chamada"))
+            called = [item for item in characters if item.actor_kind == ActorKind.AI
+                      and re.search(rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", normalized)]
             invited = [item for item in characters if item.actor_kind == ActorKind.AI
                        and item not in present
                        and re.match(rf"^\s*{re.escape(item.display_name.casefold().split()[0])}(?!\w)[,!.?\s]", normalized)]
@@ -187,7 +190,9 @@ def create_bot(settings: Settings):
                          if re.search(rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", normalized)]
             conversation_key = (message.channel.id, message.author.id)
             previous = self._active_conversations.get(conversation_key)
-            if addressed:
+            if is_phone_call and called:
+                character = min(called, key=lambda item: normalized.find(item.display_name.casefold().split()[0]))
+            elif addressed:
                 character = addressed[0]
             elif previous and previous[1] > time.monotonic():
                 character = next((item for item in present if item.character_id == previous[0]), None)
@@ -200,18 +205,39 @@ def create_bot(settings: Settings):
             if character is None:
                 return
             try:
-                if character.current_location_key != location.location_key:
+                remote_call = is_phone_call and character.current_location_key != location.location_key
+                if character.current_location_key != location.location_key and not remote_call:
                     character = replace(character, current_location_key=location.location_key,
                                         activity=f"presente em {location.room}")
                     await self.store.save_character(character)
                 memories = await self.store.list_memories(character.character_id, limit=8)
+                completed_action = ""
+                if remote_call:
+                    for receiver in characters:
+                        if receiver.actor_kind != ActorKind.AI or receiver.character_id == character.character_id:
+                            continue
+                        first_name = re.escape(receiver.display_name.casefold().split()[0])
+                        if re.search(rf"\b(?:diga|avise|mande\s+(?:uma\s+)?mensagem)\s+(?:ao|a|para\s+o)\s+{first_name}\b", normalized):
+                            await self.store.add_memory(
+                                receiver.character_id,
+                                f"Recado de {message.author.display_name} transmitido por {character.display_name}: {message.content}",
+                                source_character_id=character.character_id,
+                                location_key=character.current_location_key,
+                                importance=2,
+                            )
+                            completed_action = f"Recado para {receiver.display_name} registrado e entregue à memória dele; presença e horário de chegada ainda não confirmados"
+                            break
                 reply = await self.ai_service.reply(
                     character=character,
-                    location=location,
+                    location=(next((place for place in self.location_by_channel.values()
+                                    if place.location_key == character.current_location_key), location)
+                              if remote_call else location),
                     world=state,
                     human_name=message.author.display_name,
-                    human_message=message.content,
+                    human_message=(f"Você está atendendo pelo telefone, sem estar fisicamente nesta sala. {message.content}"
+                                   if remote_call else message.content),
                     recent_memory=memories,
+                    completed_action=completed_action,
                 )
                 payload = self.webhook_service.build_payload(character, location, reply)
                 await self.webhook_service.send(message.channel, payload)

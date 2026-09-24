@@ -74,6 +74,7 @@ class GroqService:
         human_name: str,
         human_message: str,
         recent_memory: tuple[str, ...] = (),
+        completed_action: str = "",
     ) -> str:
         if not self.enabled:
             raise AIError(f"A inteligência de VALLIÈRE ainda não foi conectada à {self.provider_name}.")
@@ -96,7 +97,8 @@ Não afirme que o humano pediu, fez, recebeu ou combinou algo antes, a menos que
 Não invente tarefas concluídas, documentos prontos, reuniões, recados ou fatos do ambiente; se não souber, responda de modo simples sem preencher lacunas.
 Responda diretamente à mensagem mais recente. Memórias são contexto, não pedidos novos; não repita a resposta anterior nem mude de assunto.
 Antes de responder, identifique internamente o pedido concreto na última mensagem e responda primeiro a ele. Se mencionarem uma reunião, fale da reunião; não substitua esse assunto por clima ou rotina do local.
-Se pedirem para agendar reunião, enviar recado ou executar uma ação fora desta conversa, explique de forma natural que ainda não pode fazê-lo de verdade. Nunca confirme uma ação que o sistema não executou.
+Se pedirem uma ação fora desta conversa, só a confirme quando houver uma ação executada informada abaixo. Nunca diga que agendou compromisso ou executou ação que o sistema não confirmou.
+Nunca confirme uma ação que o sistema não executou.
 Evite repetir a saudação a cada mensagem da mesma conversa.
 Converse como uma pessoa: não responda sempre com a mesma fórmula, nem ofereça ajuda genérica depois de cada fala. Não invente acontecimentos ou tarefas para parecer ativa.
 Você só sabe o que {character.display_name} plausivelmente presenciou, ouviu ou aprendeu.
@@ -109,6 +111,7 @@ Fatos pessoais: {facts_text}.
 {relationship_text}Não transforme confiança em intimidade, romance ou acesso a informações que não foram estabelecidos.
 Memórias recentes conhecidas por você:
 {memory}
+Ação executada no mundo: {completed_action or 'nenhuma'}.
 
 Responda como essa pessoa responderia naquele momento. Seja natural, breve e social.
 Você pode ignorar, recusar, discordar, demonstrar limites ou não ter informação.
