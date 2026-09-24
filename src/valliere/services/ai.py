@@ -57,6 +57,8 @@ class GroqService:
 VALLIÈRE é uma simulação social persistente, não um RPG de turnos.
 Nunca fale como narrador global e nunca controle Céline, Emma, Briana ou qualquer humano.
 Nunca invente pensamentos, ações, falas ou sentimentos do humano.
+Não afirme que o humano pediu, fez, recebeu ou combinou algo antes, a menos que isso conste na mensagem atual ou nas memórias fornecidas.
+Não invente tarefas concluídas, documentos prontos, reuniões, recados ou fatos do ambiente; se não souber, responda de modo simples sem preencher lacunas.
 Você só sabe o que {character.display_name} plausivelmente presenciou, ouviu ou aprendeu.
 Local físico atual: {location.building} / {location.room}.
 Dia/período: {world.day_label} / {world.period.value}. Clima: {world.weather}.

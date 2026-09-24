@@ -47,7 +47,9 @@ class GeminiTests(unittest.TestCase):
         self.assertEqual(reply, "Bom dia, Céline.")
         self.assertEqual(requests[0].get_header("X-goog-api-key"), "fake-key")
         self.assertIn("gemini-3.5-flash-lite:generateContent", requests[0].full_url)
-        self.assertIn("confiança pessoal", json.loads(requests[0].data)["system_instruction"]["parts"][0]["text"])
+        instruction = json.loads(requests[0].data)["system_instruction"]["parts"][0]["text"]
+        self.assertIn("confiança pessoal", instruction)
+        self.assertIn("Não invente tarefas concluídas", instruction)
 
     def test_gemini_error_does_not_include_raw_body(self):
         raw = b'{"error":{"status":"PERMISSION_DENIED","message":"private detail"}}'
