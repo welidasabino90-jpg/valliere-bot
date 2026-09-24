@@ -8,7 +8,7 @@ localização ou webhooks, configure as variáveis privadas da hospedagem:
 ```text
 AI_PROVIDER=gemini
 GEMINI_API_KEY=<chave criada no Google AI Studio>
-GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-3.5-flash-lite
 ```
 
 Para manter Groq, deixe `AI_PROVIDER=groq` (ou não defina essa variável) e use

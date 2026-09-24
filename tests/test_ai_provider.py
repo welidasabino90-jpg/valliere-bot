@@ -40,12 +40,13 @@ class GeminiTests(unittest.TestCase):
             return FakeResponse({"candidates": [{"content": {"parts": [{"text": "Bom dia, Céline."}]}}]})
 
         with patch("valliere.services.ai.urllib.request.urlopen", side_effect=fake_urlopen):
-            reply = asyncio.run(GeminiService("fake-key", "gemini-2.5-flash-lite").reply(
+            reply = asyncio.run(GeminiService("fake-key", "gemini-3.5-flash-lite").reply(
                 character=olivia, location=location, world=WorldState(1),
                 human_name="Céline", human_message="Bom dia, Olivia",
             ))
         self.assertEqual(reply, "Bom dia, Céline.")
         self.assertEqual(requests[0].get_header("X-goog-api-key"), "fake-key")
+        self.assertIn("gemini-3.5-flash-lite:generateContent", requests[0].full_url)
         self.assertIn("confiança pessoal", json.loads(requests[0].data)["system_instruction"]["parts"][0]["text"])
 
     def test_gemini_error_does_not_include_raw_body(self):
@@ -53,7 +54,7 @@ class GeminiTests(unittest.TestCase):
         error = urllib.error.HTTPError("url", 403, "Forbidden", {}, io.BytesIO(raw))
         with patch("valliere.services.ai.urllib.request.urlopen", side_effect=error):
             with self.assertRaises(AIError) as caught:
-                GeminiService("fake-key", "gemini-2.5-flash-lite")._request("system", "user")
+                GeminiService("fake-key", "gemini-3.5-flash-lite")._request("system", "user")
         self.assertEqual(caught.exception.status_code, 403)
         self.assertEqual(caught.exception.error_code, "PERMISSION_DENIED")
         self.assertNotIn("private detail", str(caught.exception))
