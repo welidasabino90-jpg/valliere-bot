@@ -457,12 +457,21 @@ def create_bot(settings: Settings):
                 )
             payload = self.webhook_service.build_phone_payload(contact, reply, mode)
             await self.webhook_service.send(channel, payload)
-            await self.store.add_memory(
-                contact.character_id,
-                f"{mode.capitalize()} de {author.display_name}: {spoken}. Resposta: {reply[:500]}",
-                source_character_id=f"discord:{author.id}",
-                location_key=contact.current_location_key, importance=1,
-            )
+            # source_character_id references characters.character_id in Supabase.
+            # A Discord user id is not a character id, so storing "discord:<id>"
+            # here can violate the FK after a perfectly successful phone reply.
+            # Keep the human identity in the memory text and leave the FK empty.
+            try:
+                await self.store.add_memory(
+                    contact.character_id,
+                    f"{mode.capitalize()} de {author.display_name}: {spoken}. Resposta: {reply[:500]}",
+                    source_character_id=None,
+                    location_key=contact.current_location_key, importance=1,
+                )
+            except Exception:
+                # Memory persistence must never turn a delivered call/text into
+                # a failed contact. Log it and keep the live conversation open.
+                logger.exception("Falha ao salvar memória do contato remoto com %s", contact.character_id)
             here = self.location_by_channel.get(channel.id)
             if recipient and here and here.building == "NYX Agency & Atelier" and (
                 here.room or "").casefold().startswith("sala-") and re.search(
