@@ -209,7 +209,7 @@ class GeminiService(GroqService):
         payload = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": user_message}]}],
-            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 220},
+            "generationConfig": ({"maxOutputTokens": 220, "thinkingConfig": {"thinkingLevel": "minimal"}} if self.model.startswith("gemini-3") else {"temperature": 0.7, "maxOutputTokens": 220}),
         }
         req = urllib.request.Request(
             f"{self.ENDPOINT}/{self.model}:generateContent",
