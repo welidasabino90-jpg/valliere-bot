@@ -1,5 +1,24 @@
 # VALLIÈRE Bot — Fase 1
 
+## IA das personagens
+
+O bot usa Groq por padrão. Para testar Gemini sem alterar personagens, memória,
+localização ou webhooks, configure as variáveis privadas da hospedagem:
+
+```text
+AI_PROVIDER=gemini
+GEMINI_API_KEY=<chave criada no Google AI Studio>
+GEMINI_MODEL=gemini-2.5-flash-lite
+```
+
+Para manter Groq, deixe `AI_PROVIDER=groq` (ou não defina essa variável) e use
+`GROQ_API_KEY` e, opcionalmente, `GROQ_MODEL`. Não publique chaves no repositório.
+Depois da implantação, rode `/diagnosticoia personagem:olivia-bennett` em um
+canal físico com Olivia presente e a cidade acordada. O diagnóstico é privado
+para administradores, mas uma resposta bem-sucedida é publicada no canal.
+O limite gratuito e a disponibilidade dos modelos dependem do projeto e
+devem ser conferidos na conta do provedor antes de escolher a configuração.
+
 Núcleo oficial do simulador social persistente VALLIÈRE.
 
 ## O que já existe
@@ -80,4 +99,3 @@ A Fase 2 conectará Groq ao núcleo, com contexto isolado por pessoa de IA. A IA
 será autorizada a publicar diretamente: suas decisões passarão pelas regras de
 identidade, localização, conhecimento e proteção das humanas antes de chegar aos
 webhooks.
-

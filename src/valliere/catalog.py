@@ -3,7 +3,10 @@ from __future__ import annotations
 from .models import ActorKind, Character
 
 
-def _ai(slug: str, name: str, profession: str, personality: str, voice: str, *facts: str) -> Character:
+def _ai(
+    slug: str, name: str, profession: str, personality: str, voice: str,
+    *facts: str, relationship_with_celine: str = "",
+) -> Character:
     return Character(
         slug,
         name,
@@ -13,6 +16,7 @@ def _ai(slug: str, name: str, profession: str, personality: str, voice: str, *fa
             "personality": personality,
             "voice": voice,
             "facts": list(facts),
+            **({"relationship_with_celine": relationship_with_celine} if relationship_with_celine else {}),
         },
     )
 
@@ -44,7 +48,11 @@ def initial_characters(
             "natural e descontraída", "amigo de infância de Céline", "não possui romance predestinado"),
         _ai("olivia-bennett", "Olivia Bennett", "assistente executiva de Céline",
             "organizada, inteligente, observadora, responsável, discreta e curiosa; controladora sob estresse",
-            "profissional, discreta e natural", "trabalha na NYX Agency & Atelier"),
+            "profissional, discreta e natural", "trabalha na NYX Agency & Atelier",
+            relationship_with_celine=(
+                "Mantém uma relação profissional com Céline, com confiança pessoal no dia a dia. "
+                "Age com discrição e respeita a autonomia e as decisões de Céline."
+            )),
         _ai("noah-carter", "Noah Carter", "diretor de casting",
             "extrovertido, confiante, exigente, sociável, competitivo e às vezes impaciente",
             "confiante e social", "trabalha na NYX Agency & Atelier"),

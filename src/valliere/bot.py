@@ -24,7 +24,7 @@ def create_bot(settings: Settings):
     from .catalog import initial_characters
     from .map import classify_channel
     from .models import ActorKind, ChannelKind, CityStatus
-    from .services.ai import AIError, GroqService
+    from .services.ai import AIError, GeminiService, GroqService
     from .services.webhooks import WebhookService
     from .services.world import DomainError, WorldService
     from .stores.supabase import SupabaseStore
@@ -46,7 +46,11 @@ def create_bot(settings: Settings):
             )
             self.world_service = WorldService(self.store, settings.discord_guild_id)
             self.webhook_service = WebhookService()
-            self.ai_service = GroqService(settings.groq_api_key, settings.groq_model)
+            self.ai_service = (
+                GeminiService(settings.gemini_api_key, settings.gemini_model)
+                if settings.ai_provider == "gemini"
+                else GroqService(settings.groq_api_key, settings.groq_model)
+            )
             self.location_by_channel: dict[int, object] = {}
             self._sleep_notice_channels: set[int] = set()
 
@@ -334,14 +338,15 @@ def create_bot(settings: Settings):
                 return
             if not bot.ai_service.enabled:
                 await interaction.followup.send(
-                    "Groq não está configurada na hospedagem (GROQ_API_KEY ausente).",
+                    f"{bot.ai_service.provider_name} não está configurada na hospedagem "
+                    f"({bot.ai_service.key_name} ausente).",
                     ephemeral=True,
                 )
                 return
 
             stage = "leitura da memória"
             memories = await bot.store.list_memories(character.character_id, limit=8)
-            stage = "resposta da Groq"
+            stage = f"resposta da {bot.ai_service.provider_name}"
             reply = await bot.ai_service.reply(
                 character=character,
                 location=location,
@@ -355,7 +360,7 @@ def create_bot(settings: Settings):
             await bot.webhook_service.send(interaction.channel, payload)
             await interaction.followup.send(
                 f"✅ **{character.display_name} respondeu no canal.** "
-                "Local, cidade, memória, Groq e webhook funcionaram. "
+                f"Local, cidade, memória, {bot.ai_service.provider_name} e webhook funcionaram. "
                 "Agora teste chamando a personagem em uma mensagem comum.",
                 ephemeral=True,
             )
