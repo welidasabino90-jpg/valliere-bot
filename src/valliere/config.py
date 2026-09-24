@@ -38,7 +38,7 @@ class Settings:
     groq_model: str = "llama-3.3-70b-versatile"
     ai_provider: str = "groq"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.5-flash-lite"
+    gemini_model: str = "gemini-2.5-flash-lite"
 
     @property
     def authorized_human_ids(self) -> frozenset[int]:
@@ -69,5 +69,5 @@ class Settings:
             groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip(),
             ai_provider=provider,
             gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
-            gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip(),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip(),
         )
