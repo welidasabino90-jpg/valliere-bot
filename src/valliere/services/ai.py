@@ -242,10 +242,33 @@ class GeminiService(GroqService):
             raise AIError("Não foi possível falar com o Gemini agora.") from None
 
         try:
-            parts = body["candidates"][0]["content"]["parts"]
-            result = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
-        except (KeyError, IndexError, TypeError, AttributeError):
+            candidates = body.get("candidates") or []
+            candidate = candidates[0] if candidates else {}
+            content = candidate.get("content") or {}
+            parts = content.get("parts") or []
+            result = "".join(
+                str(part.get("text", ""))
+                for part in parts
+                if isinstance(part, dict) and part.get("text")
+            ).strip()
+        except (TypeError, AttributeError):
             result = ""
+            candidate = {}
+
         if not result:
-            raise AIError("O Gemini não retornou uma resposta de texto.")
+            # Keep diagnostics useful without exposing prompts, keys or raw API data.
+            finish_reason = candidate.get("finishReason", "") if isinstance(candidate, dict) else ""
+            prompt_feedback = body.get("promptFeedback") if isinstance(body, dict) else None
+            code = ""
+            if isinstance(finish_reason, str) and re.fullmatch(r"[A-Z_]{1,80}", finish_reason):
+                code = finish_reason
+            elif isinstance(prompt_feedback, dict):
+                block_reason = prompt_feedback.get("blockReason", "")
+                if isinstance(block_reason, str) and re.fullmatch(r"[A-Z_]{1,80}", block_reason):
+                    code = block_reason
+            raise AIError(
+                "O Gemini não retornou uma resposta de texto.",
+                error_code=code,
+                response_kind="JSON",
+            )
         return result[:1900]
