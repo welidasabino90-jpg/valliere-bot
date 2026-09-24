@@ -89,6 +89,23 @@ def create_bot(settings: Settings):
             await self.world_service.sync_map(locations)
             self.location_by_channel = {item.channel_id: item for item in locations}
             logger.info("Mapa sincronizado: %d canais reconhecidos.", len(locations))
+            # Personagens recém-criados precisam de um ponto de partida para
+            # participar da rotina. Nunca altera uma localização já escolhida.
+            public = [place for place in locations if place.kind == ChannelKind.PHYSICAL
+                      and place.building in ("NYX Agency & Atelier", "NOIR")]
+            for person in await self.store.list_characters():
+                if person.actor_kind != ActorKind.AI or person.current_location_key or not public:
+                    continue
+                profession = str(person.profile.get("profession", "")).casefold()
+                preferred = ("NOIR" if "noir" in profession or "bartender" in profession
+                             else "NYX Agency & Atelier")
+                options = [place for place in public if place.building == preferred] or public
+                room_hint = ("casting" if "casting" in profession else
+                             "recepção" if "assistente" in profession else "")
+                start = next((place for place in options if room_hint and room_hint in place.room.casefold()),
+                             options[0])
+                await self.store.save_character(replace(person, current_location_key=start.location_key,
+                                                        activity=f"presente em {start.room}"))
             if self._routine_task is None or self._routine_task.done():
                 self._routine_task = asyncio.create_task(self._npc_routine())
 
@@ -212,6 +229,7 @@ def create_bot(settings: Settings):
                     await self.store.save_character(character)
                 memories = await self.store.list_memories(character.character_id, limit=8)
                 completed_action = ""
+                recipient = None
                 if remote_call:
                     for receiver in characters:
                         if receiver.actor_kind != ActorKind.AI or receiver.character_id == character.character_id:
@@ -226,8 +244,13 @@ def create_bot(settings: Settings):
                                 importance=2,
                             )
                             completed_action = f"Recado para {receiver.display_name} registrado e entregue à memória dele; presença e horário de chegada ainda não confirmados"
+                            recipient = receiver
                             break
-                reply = await self.ai_service.reply(
+                if recipient:
+                    reply = (f"Anotei seu recado no tablet e encaminhei para {recipient.display_name}, "
+                             f"{message.author.display_name}. Ainda não sei quando essa pessoa poderá ir até a sua sala.")
+                else:
+                    reply = await self.ai_service.reply(
                     character=character,
                     location=(next((place for place in self.location_by_channel.values()
                                     if place.location_key == character.current_location_key), location)
@@ -238,7 +261,7 @@ def create_bot(settings: Settings):
                                    if remote_call else message.content),
                     recent_memory=memories,
                     completed_action=completed_action,
-                )
+                    )
                 payload = self.webhook_service.build_payload(character, location, reply)
                 await self.webhook_service.send(message.channel, payload)
                 self._active_conversations[conversation_key] = (character.character_id, time.monotonic() + 600)
