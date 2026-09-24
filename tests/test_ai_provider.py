@@ -50,6 +50,9 @@ class GeminiTests(unittest.TestCase):
         instruction = json.loads(requests[0].data)["system_instruction"]["parts"][0]["text"]
         self.assertIn("confiança pessoal", instruction)
         self.assertIn("Não invente tarefas concluídas", instruction)
+        self.assertIn("Nunca confirme uma ação que o sistema não executou", instruction)
+        user_text = json.loads(requests[0].data)["contents"][0]["parts"][0]["text"]
+        self.assertIn("MENSAGEM MAIS RECENTE DE Céline", user_text)
 
     def test_gemini_error_does_not_include_raw_body(self):
         raw = b'{"error":{"status":"PERMISSION_DENIED","message":"private detail"}}'
