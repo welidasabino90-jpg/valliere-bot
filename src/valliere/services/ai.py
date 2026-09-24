@@ -202,70 +202,66 @@ class GeminiService(GroqService):
     provider_name = "Gemini"
     key_name = "GEMINI_API_KEY"
     ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
+    FALLBACK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
 
     def _request(self, system: str, user_message: str) -> str:
         if not re.fullmatch(r"[a-zA-Z0-9._-]{1,100}", self.model):
             raise AIError("Nome do modelo Gemini inválido.")
-        payload = {
-            "system_instruction": {"parts": [{"text": system}]},
-            "contents": [{"role": "user", "parts": [{"text": user_message}]}],
-            "generationConfig": ({"maxOutputTokens": 220, "thinkingConfig": {"thinkingLevel": "minimal"}} if self.model.startswith("gemini-3") else {"temperature": 0.7, "maxOutputTokens": 220}),
-        }
-        req = urllib.request.Request(
-            f"{self.ENDPOINT}/{self.model}:generateContent",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            for attempt in range(4):
-                try:
-                    with urllib.request.urlopen(req, timeout=25) as response:
-                        body = json.loads(response.read().decode("utf-8"))
-                    break
-                except urllib.error.HTTPError as retry_exc:
-                    if retry_exc.code not in (429, 500, 502, 503, 504) or attempt == 3:
-                        raise
-                    retry_exc.read(4096)
-                    import time
-                    time.sleep(2 ** attempt)
-        except urllib.error.HTTPError as exc:
-            # Preserve only the status and a small machine-readable code.
-            raw = exc.read(4096).decode("utf-8", errors="replace")
-            kind = "HTML" if raw.lstrip().lower().startswith(("<!doctype html", "<html")) else "texto"
-            code = ""
+
+        # Keep the configured model as first choice. If Google's service returns
+        # a transient availability/capacity error, transparently continue with
+        # stable Flash-Lite models instead of dropping the NPC conversation.
+        models = []
+        for model in (self.model, *self.FALLBACK_MODELS):
+            if model not in models:
+                models.append(model)
+
+        last_error: AIError | None = None
+        for model in models:
+            generation_config = {"maxOutputTokens": 220}
+            if model.startswith("gemini-3"):
+                generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
+            else:
+                generation_config["temperature"] = 0.7
+
+            payload = {
+                "system_instruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": user_message}]}],
+                "generationConfig": generation_config,
+            }
+
+            req = urllib.request.Request(
+                f"{self.ENDPOINT}/{model}:generateContent",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+                method="POST",
+            )
+
             try:
-                parsed = json.loads(raw)
-                kind = "JSON"
-                error = parsed.get("error", {}) if isinstance(parsed, dict) else {}
-                candidate = error.get("status", "") if isinstance(error, dict) else ""
-                if isinstance(candidate, str) and re.fullmatch(r"[A-Z_]{1,80}", candidate):
-                    code = candidate
-            except (ValueError, TypeError):
-                pass
-            raise AIError(
-                f"Gemini recusou a solicitação (HTTP {exc.code}).",
-                status_code=exc.code, error_code=code, response_kind=kind,
-            ) from None
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise AIError("Não foi possível falar com o Gemini agora.") from None
+                body = self._request_model(req)
+            except AIError as exc:
+                last_error = exc
+                if exc.status_code in (429, 500, 502, 503, 504):
+                    continue
+                raise
 
-        try:
-            candidates = body.get("candidates") or []
-            candidate = candidates[0] if candidates else {}
-            content = candidate.get("content") or {}
-            parts = content.get("parts") or []
-            result = "".join(
-                str(part.get("text", ""))
-                for part in parts
-                if isinstance(part, dict) and part.get("text")
-            ).strip()
-        except (TypeError, AttributeError):
-            result = ""
-            candidate = {}
+            try:
+                candidates = body.get("candidates") or []
+                candidate = candidates[0] if candidates else {}
+                content = candidate.get("content") or {}
+                parts = content.get("parts") or []
+                result = "".join(
+                    str(part.get("text", ""))
+                    for part in parts
+                    if isinstance(part, dict) and part.get("text")
+                ).strip()
+            except (TypeError, AttributeError):
+                result = ""
+                candidate = {}
 
-        if not result:
-            # Keep diagnostics useful without exposing prompts, keys or raw API data.
+            if result:
+                return result[:1900]
+
             finish_reason = candidate.get("finishReason", "") if isinstance(candidate, dict) else ""
             prompt_feedback = body.get("promptFeedback") if isinstance(body, dict) else None
             code = ""
@@ -280,4 +276,46 @@ class GeminiService(GroqService):
                 error_code=code,
                 response_kind="JSON",
             )
-        return result[:1900]
+
+        if last_error is not None:
+            raise last_error
+        raise AIError("Não foi possível falar com o Gemini agora.")
+
+    def _request_model(self, req: urllib.request.Request) -> dict:
+        import time
+
+        for attempt in range(2):
+            try:
+                with urllib.request.urlopen(req, timeout=25) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                raw = exc.read(4096).decode("utf-8", errors="replace")
+                kind = "HTML" if raw.lstrip().lower().startswith(("<!doctype html", "<html")) else "texto"
+                code = ""
+                try:
+                    parsed = json.loads(raw)
+                    kind = "JSON"
+                    error = parsed.get("error", {}) if isinstance(parsed, dict) else {}
+                    candidate = error.get("status", "") if isinstance(error, dict) else ""
+                    if isinstance(candidate, str) and re.fullmatch(r"[A-Z_]{1,80}", candidate):
+                        code = candidate
+                except (ValueError, TypeError):
+                    pass
+
+                transient = exc.code in (429, 500, 502, 503, 504)
+                if transient and attempt == 0:
+                    time.sleep(1)
+                    continue
+                raise AIError(
+                    f"Gemini recusou a solicitação (HTTP {exc.code}).",
+                    status_code=exc.code,
+                    error_code=code,
+                    response_kind=kind,
+                ) from None
+            except (urllib.error.URLError, TimeoutError):
+                if attempt == 0:
+                    time.sleep(1)
+                    continue
+                raise AIError("Não foi possível falar com o Gemini agora.") from None
+
+        raise AIError("Não foi possível falar com o Gemini agora.")
