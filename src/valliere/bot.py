@@ -117,7 +117,7 @@ def create_bot(settings: Settings):
                 return
 
             # Um interlocutor por vez: nome explícito, conversa em andamento,
-            # ou pergunta dirigida ao único NPC presente no local.
+            # ou fala humana quando há apenas um NPC presente no local.
             normalized = message.content.casefold()
             addressed = [
                 item for item in present
@@ -129,7 +129,7 @@ def create_bot(settings: Settings):
                 character = addressed[0]
             elif previous and previous[1] > time.monotonic():
                 character = next((item for item in present if item.character_id == previous[0]), None)
-            elif len(present) == 1 and "?" in message.content:
+            elif len(present) == 1 and message.content.strip():
                 character = present[0]
             else:
                 character = None
