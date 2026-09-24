@@ -36,14 +36,17 @@ class GroqService:
     ) -> tuple[str, int, str]:
         """Return a constrained fictional action; never execute it here."""
         profile = character.profile or {}
+        facts = "; ".join(str(item) for item in profile.get("facts", []))
         choices = ", ".join(f"{place.channel_id}: {place.building}/{place.room}" for place in destinations)
         system = (
             f"Você decide a próxima ação cotidiana de {character.display_name}, personagem fictícia. "
             f"Profissão: {profile.get('profession', '')}. Personalidade: {profile.get('personality', '')}. "
+            f"Fatos conhecidos: {facts}. "
             f"Local atual: {location.building}/{location.room}. Período: {world.period.value}. "
             f"Memórias: {'; '.join(recent_memory[-4:])[:800]}. "
             "Escolha ficar, falar brevemente ou andar até uma sala disponível. "
-            "Não invente ações de humanos, recados enviados, reuniões marcadas ou tarefas concluídas. "
+            "Não invente emprego, cargo, acesso à agenda ou reuniões, ações de humanos, recados enviados ou tarefas concluídas. "
+            "Se a profissão não foi definida, não aja como funcionário de qualquer empresa. "
             "Sua fala deve ser curta, natural e independente; não convide alguém sem contexto. "
             "Responda SOMENTE JSON: {\"action\":\"stay|speak|move\",\"destination\":0,\"text\":\"\"}. "
             "Para move, destination deve ser o número da sala e text pode ser uma fala curta ao chegar. "

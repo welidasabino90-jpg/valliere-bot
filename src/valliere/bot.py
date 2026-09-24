@@ -167,7 +167,12 @@ def create_bot(settings: Settings):
                                                         random.random()))
             self._npc_last_turn[character.character_id] = time.monotonic()
             current = by_key[character.current_location_key]
-            destinations = tuple(place for place in locations if place.channel_id != current.channel_id)
+            # Escritórios pessoais e residências exigem convite explícito.
+            # Movimento por chamada/mensagem continua permitido fora desta rotina.
+            destinations = tuple(place for place in locations
+                                 if place.channel_id != current.channel_id
+                                 and not (place.room or "").casefold().startswith("sala-")
+                                 and not (place.building or "").casefold().startswith("residência"))
             if character.character_id == "olivia-bennett" and world.period.value in ("MANHÃ", "TARDE"):
                 reception = next((place for place in locations if place.building == "NYX Agency & Atelier"
                                   and "recepção" in (place.room or "").casefold()), None)
@@ -184,6 +189,8 @@ def create_bot(settings: Settings):
                 world=world, recent_memory=memory,
             )
             if action == "stay":
+                return
+            if action == "speak" and (current.room or "").casefold().startswith("sala-"):
                 return
             target = (next(place for place in destinations if place.channel_id == destination_id)
                       if action == "move" else current)
