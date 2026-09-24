@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 
 from .config import ConfigurationError, Settings
 
@@ -53,6 +55,7 @@ def create_bot(settings: Settings):
             )
             self.location_by_channel: dict[int, object] = {}
             self._sleep_notice_channels: set[int] = set()
+            self._active_conversations: dict[tuple[int, int], tuple[str, float]] = {}
 
         async def setup_hook(self) -> None:
             await self.world_service.initialize(
@@ -113,18 +116,25 @@ def create_bot(settings: Settings):
             if not present:
                 return
 
-            # Presença não significa participação: uma mensagem comum não faz
-            # todos os presentes responderem. Menção pelo nome dá iniciativa.
+            # Um interlocutor por vez: nome explícito, conversa em andamento,
+            # ou pergunta dirigida ao único NPC presente no local.
             normalized = message.content.casefold()
             addressed = [
                 item for item in present
-                if item.display_name.casefold().split()[0] in normalized
-                or item.display_name.casefold() in normalized
+                if re.search(rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", normalized)
             ]
-            if not addressed:
+            conversation_key = (message.channel.id, message.author.id)
+            previous = self._active_conversations.get(conversation_key)
+            if addressed:
+                character = addressed[0]
+            elif previous and previous[1] > time.monotonic():
+                character = next((item for item in present if item.character_id == previous[0]), None)
+            elif len(present) == 1 and "?" in message.content:
+                character = present[0]
+            else:
+                character = None
+            if character is None:
                 return
-
-            character = addressed[0]
             memories = await self.store.list_memories(character.character_id, limit=8)
             try:
                 reply = await self.ai_service.reply(
@@ -137,6 +147,7 @@ def create_bot(settings: Settings):
                 )
                 payload = self.webhook_service.build_payload(character, location, reply)
                 await self.webhook_service.send(message.channel, payload)
+                self._active_conversations[conversation_key] = (character.character_id, time.monotonic() + 600)
                 await self.store.add_memory(
                     character.character_id,
                     f"{message.author.display_name} disse: {message.content}",
