@@ -263,14 +263,18 @@ def create_bot(settings: Settings):
             # Uma pessoa pode chamar um NPC de outra sala diretamente neste
             # canal. O local persistido é trocado antes de a pessoa responder.
             normalized = message.content.casefold()
+            def name_in_text(person) -> bool:
+                names = [person.display_name.casefold().split()[0]]
+                if person.character_id == "nathan":
+                    names.extend(("natam", "natham"))
+                return any(re.search(rf"(?<!\w){re.escape(name)}(?!\w)", normalized) for name in names)
             is_phone_call = any(word in normalized for word in ("ligo", "telefone", "ramal", "chamada"))
             called = [item for item in characters if item.actor_kind == ActorKind.AI
-                      and re.search(rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", normalized)]
+                      and name_in_text(item)]
             invited = [item for item in characters if item.actor_kind == ActorKind.AI
                        and item not in present
                        and re.match(rf"^\s*{re.escape(item.display_name.casefold().split()[0])}(?!\w)[,!.?\s]", normalized)]
-            addressed = [item for item in present
-                         if re.search(rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", normalized)]
+            addressed = [item for item in present if name_in_text(item)]
             conversation_key = (message.channel.id, message.author.id)
             previous = self._active_conversations.get(conversation_key)
             continuing = (next((item for item in present if item.character_id == previous[0]), None)
@@ -287,13 +291,33 @@ def create_bot(settings: Settings):
                 item.character_id == "olivia-bennett" for item in present
             ):
                 character = next(item for item in present if item.character_id == "olivia-bennett")
-            elif len(present) == 1 and message.content.strip():
+            elif len(present) == 1 and message.content.strip() and not (location.room or "").casefold().startswith("sala-"):
                 character = present[0]
             else:
                 character = None
             if character is None:
                 return
             try:
+                leave_request = (character in present
+                                 and (location.room or "").casefold().startswith("sala-")
+                                 and name_in_text(character)
+                                 and re.search(r"\b(?:saia|sai|retire-se|vá\s+embora|va\s+embora)\b", normalized))
+                if leave_request:
+                    public = [place for place in self.location_by_channel.values()
+                              if place.kind == ChannelKind.PHYSICAL
+                              and place.building == location.building
+                              and not (place.room or "").casefold().startswith("sala-")]
+                    if public:
+                        destination = next((place for place in public if "lounge" in (place.room or "").casefold()), public[0])
+                        await self.store.save_character(replace(
+                            character, current_location_key=destination.location_key,
+                            activity=f"presente em {destination.room}",
+                        ))
+                        self._active_conversations.pop(conversation_key, None)
+                        await self.webhook_service.send(message.channel, self.webhook_service.build_payload(
+                            character, location, "Tudo bem, vou deixar a sala.",
+                        ))
+                        return
                 remote_call = is_phone_call and character.current_location_key != location.location_key
                 if character.current_location_key != location.location_key and not remote_call:
                     character = replace(character, current_location_key=location.location_key,
