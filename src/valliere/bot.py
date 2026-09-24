@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 import time
+from dataclasses import replace
 
 from .config import ConfigurationError, Settings
 
@@ -113,30 +114,34 @@ def create_bot(settings: Settings):
                 if item.actor_kind == ActorKind.AI
                 and item.current_location_key == location.location_key
             ]
-            if not present:
-                return
-
-            # Um interlocutor por vez: nome explícito, conversa em andamento,
-            # ou fala humana quando há apenas um NPC presente no local.
+            # Uma pessoa pode chamar um NPC de outra sala diretamente neste
+            # canal. O local persistido é trocado antes de a pessoa responder.
             normalized = message.content.casefold()
-            addressed = [
-                item for item in present
-                if re.search(rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", normalized)
-            ]
+            invited = [item for item in characters if item.actor_kind == ActorKind.AI
+                       and item not in present
+                       and re.match(rf"^\s*{re.escape(item.display_name.casefold().split()[0])}(?!\w)[,!.?\s]", normalized)]
+            addressed = [item for item in present
+                         if re.search(rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", normalized)]
             conversation_key = (message.channel.id, message.author.id)
             previous = self._active_conversations.get(conversation_key)
             if addressed:
                 character = addressed[0]
             elif previous and previous[1] > time.monotonic():
                 character = next((item for item in present if item.character_id == previous[0]), None)
+            elif invited:
+                character = invited[0]
             elif len(present) == 1 and message.content.strip():
                 character = present[0]
             else:
                 character = None
             if character is None:
                 return
-            memories = await self.store.list_memories(character.character_id, limit=8)
             try:
+                if character.current_location_key != location.location_key:
+                    character = replace(character, current_location_key=location.location_key,
+                                        activity=f"presente em {location.room}")
+                    await self.store.save_character(character)
+                memories = await self.store.list_memories(character.character_id, limit=8)
                 reply = await self.ai_service.reply(
                     character=character,
                     location=location,
