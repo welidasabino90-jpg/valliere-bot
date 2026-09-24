@@ -59,6 +59,8 @@ def create_bot(settings: Settings):
             self._sleep_notice_channels: set[int] = set()
             self._active_conversations: dict[tuple[int, int], tuple[str, float]] = {}
             self._routine_task: asyncio.Task | None = None
+            self._routine_lock = asyncio.Lock()
+            self._npc_last_turn: dict[str, float] = {}
 
         async def setup_hook(self) -> None:
             await self.world_service.initialize(
@@ -123,10 +125,16 @@ def create_bot(settings: Settings):
             await asyncio.sleep(300)
             while not self.is_closed():
                 try:
-                    await self._npc_turn()
+                    await self._run_npc_turn()
                 except Exception:
                     logger.exception("Falha na rotina autônoma dos NPCs")
-                await asyncio.sleep(900)
+                await asyncio.sleep(300)
+
+        async def _run_npc_turn(self) -> None:
+            if self._routine_lock.locked():
+                return
+            async with self._routine_lock:
+                await self._npc_turn()
 
         async def _npc_turn(self) -> None:
             if not self.ai_service.enabled:
@@ -141,10 +149,13 @@ def create_bot(settings: Settings):
                 return
             by_key = {place.location_key: place for place in locations}
             eligible = [person for person in await self.store.list_characters()
-                        if person.actor_kind == ActorKind.AI and person.current_location_key in by_key]
+                        if person.actor_kind == ActorKind.AI and person.current_location_key in by_key
+                        and person.profile.get("autonomy_enabled") is True]
             if not eligible:
                 return
-            character = random.choice(eligible)
+            character = min(eligible, key=lambda item: (self._npc_last_turn.get(item.character_id, 0),
+                                                        random.random()))
+            self._npc_last_turn[character.character_id] = time.monotonic()
             current = by_key[character.current_location_key]
             destinations = tuple(place for place in locations if place.channel_id != current.channel_id)
             if len(destinations) > 12:
@@ -331,6 +342,57 @@ def create_bot(settings: Settings):
             "carros voltam às avenidas e as rotinas são retomadas.\n\n"
             "**VALLIÈRE está acordada.**"
         )
+
+    @bot.tree.command(name="iniciarnpcs", description="Ativa a rotina autônoma de todos os NPCs.")
+    async def iniciarnpcs(interaction):
+        if not await guard(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            characters = await bot.store.list_characters()
+            npcs = [person for person in characters if person.actor_kind == ActorKind.AI]
+            for person in npcs:
+                if person.profile.get("autonomy_enabled") is not True:
+                    await bot.store.save_character(replace(
+                        person, profile={**person.profile, "autonomy_enabled": True}
+                    ))
+            world = await bot.world_service.world()
+        except Exception:
+            logger.exception("Falha ao iniciar NPCs")
+            await interaction.followup.send("Não consegui ativar todos os NPCs. Verifique os logs do bot.", ephemeral=True)
+            return
+        await interaction.followup.send(
+            f"✅ Rotina de **{len(npcs)} NPCs** ativada. "
+            + ("A cidade está acordada: a primeira decisão será feita agora; depois, uma a cada 5 minutos."
+               if world.city_status == CityStatus.ACTIVE
+               else "Eles começarão a agir quando a cidade acordar."),
+            ephemeral=True,
+        )
+        if world.city_status == CityStatus.ACTIVE:
+            async def begin() -> None:
+                try:
+                    await bot._run_npc_turn()
+                except Exception:
+                    logger.exception("Falha no primeiro turno dos NPCs")
+            asyncio.create_task(begin())
+
+    @bot.tree.command(name="pararnpcs", description="Pausa a rotina autônoma de todos os NPCs.")
+    async def pararnpcs(interaction):
+        if not await guard(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            characters = await bot.store.list_characters()
+            for person in characters:
+                if person.actor_kind == ActorKind.AI and person.profile.get("autonomy_enabled") is True:
+                    await bot.store.save_character(replace(
+                        person, profile={**person.profile, "autonomy_enabled": False}
+                    ))
+        except Exception:
+            logger.exception("Falha ao pausar NPCs")
+            await interaction.followup.send("Não consegui pausar todos os NPCs. Verifique os logs do bot.", ephemeral=True)
+            return
+        await interaction.followup.send("⏸️ Rotina autônoma pausada. Você ainda pode conversar com os NPCs.", ephemeral=True)
 
     @bot.tree.command(name="avancartempo", description="Avança o período híbrido da cidade.")
     async def avancartempo(interaction):
