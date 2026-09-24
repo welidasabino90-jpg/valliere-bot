@@ -108,6 +108,16 @@ def create_bot(settings: Settings):
                              options[0])
                 await self.store.save_character(replace(person, current_location_key=start.location_key,
                                                         activity=f"presente em {start.room}"))
+            world = await self.world_service.world()
+            if world.city_status == CityStatus.ACTIVE and world.period.value in ("MANHÃ", "TARDE"):
+                reception = next((place for place in locations if place.kind == ChannelKind.PHYSICAL
+                                  and place.building == "NYX Agency & Atelier"
+                                  and "recepção" in (place.room or "").casefold()), None)
+                if reception:
+                    for person in await self.store.list_characters():
+                        if person.character_id == "olivia-bennett" and person.current_location_key != reception.location_key:
+                            await self.store.save_character(replace(person, current_location_key=reception.location_key,
+                                                                    activity="atendendo na recepção"))
             if self._routine_task is None or self._routine_task.done():
                 self._routine_task = asyncio.create_task(self._npc_routine())
 
@@ -158,6 +168,14 @@ def create_bot(settings: Settings):
             self._npc_last_turn[character.character_id] = time.monotonic()
             current = by_key[character.current_location_key]
             destinations = tuple(place for place in locations if place.channel_id != current.channel_id)
+            if character.character_id == "olivia-bennett" and world.period.value in ("MANHÃ", "TARDE"):
+                reception = next((place for place in locations if place.building == "NYX Agency & Atelier"
+                                  and "recepção" in (place.room or "").casefold()), None)
+                if reception and current.location_key != reception.location_key:
+                    await self.store.save_character(replace(character, current_location_key=reception.location_key,
+                                                            activity="atendendo na recepção"))
+                    return
+                destinations = ()
             if len(destinations) > 12:
                 destinations = tuple(random.sample(destinations, 12))
             memory = await self.store.list_memories(character.character_id, limit=4)
@@ -178,6 +196,36 @@ def create_bot(settings: Settings):
                 channel = self.get_channel(target.channel_id)
                 payload = self.webhook_service.build_payload(character, target, speech)
                 await self.webhook_service.send(channel, payload)
+
+        async def _deliver_visit(self, recipient_id: str, destination, caller_name: str) -> None:
+            await asyncio.sleep(12)
+            try:
+                world = await self.world_service.world()
+                if world.city_status != CityStatus.ACTIVE:
+                    return
+                recipient = next((item for item in await self.store.list_characters()
+                                  if item.character_id == recipient_id and item.actor_kind == ActorKind.AI), None)
+                channel = self.get_channel(destination.channel_id)
+                if recipient is None or channel is None:
+                    return
+                recipient = replace(recipient, current_location_key=destination.location_key,
+                                    activity=f"visitando {destination.room}")
+                await self.store.save_character(recipient)
+                self._npc_last_turn[recipient.character_id] = time.monotonic()
+                memories = await self.store.list_memories(recipient.character_id, limit=4)
+                try:
+                    speech = await self.ai_service.reply(
+                        character=recipient, location=destination, world=world,
+                        human_name=caller_name,
+                        human_message=f"Você recebeu um recado para vir conversar com {caller_name} nesta sala. Você acaba de chegar. Cumprimente e responda ao assunto do recado, sem alegar ter concluído outras tarefas.",
+                        recent_memory=memories,
+                    )
+                except Exception:
+                    logger.exception("Falha na fala de chegada de %s", recipient_id)
+                    speech = f"Oi, {caller_name}. Recebi seu recado e vim conversar."
+                await self.webhook_service.send(channel, self.webhook_service.build_payload(recipient, destination, speech))
+            except Exception:
+                logger.exception("Falha ao atender convite de %s", recipient_id)
 
         async def on_message(self, message) -> None:
             if message.author.bot or message.webhook_id or not message.guild:
@@ -218,14 +266,20 @@ def create_bot(settings: Settings):
                          if re.search(rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", normalized)]
             conversation_key = (message.channel.id, message.author.id)
             previous = self._active_conversations.get(conversation_key)
+            continuing = (next((item for item in present if item.character_id == previous[0]), None)
+                          if previous and previous[1] > time.monotonic() else None)
             if is_phone_call and called:
                 character = min(called, key=lambda item: normalized.find(item.display_name.casefold().split()[0]))
             elif addressed:
                 character = addressed[0]
-            elif previous and previous[1] > time.monotonic():
-                character = next((item for item in present if item.character_id == previous[0]), None)
+            elif continuing:
+                character = continuing
             elif invited:
                 character = invited[0]
+            elif "recepção" in (location.room or "").casefold() and any(
+                item.character_id == "olivia-bennett" for item in present
+            ):
+                character = next(item for item in present if item.character_id == "olivia-bennett")
             elif len(present) == 1 and message.content.strip():
                 character = present[0]
             else:
@@ -275,6 +329,11 @@ def create_bot(settings: Settings):
                     )
                 payload = self.webhook_service.build_payload(character, location, reply)
                 await self.webhook_service.send(message.channel, payload)
+                if recipient and re.search(r"\b(?:venha|vir|venha\s+até|passe)\b", normalized) and re.search(
+                    r"\b(?:minha\s+sala|sala\s+da\s+céline|sala\s+da\s+celine)\b", normalized
+                ):
+                    asyncio.create_task(bot._deliver_visit(recipient.character_id, location,
+                                                           message.author.display_name))
                 self._active_conversations[conversation_key] = (character.character_id, time.monotonic() + 600)
                 await self.store.add_memory(
                     character.character_id,
