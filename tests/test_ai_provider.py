@@ -29,6 +29,23 @@ class FakeResponse:
 
 
 class GeminiTests(unittest.TestCase):
+    def test_autonomous_action_rejects_unknown_destination(self):
+        olivia = next(c for c in initial_characters() if c.character_id == "olivia-bennett")
+        reception = Location(1, 2, None, "NYX", "recepção", ChannelKind.PHYSICAL,
+                             building="NYX", room="recepção")
+        office = Location(1, 3, None, "NYX", "sala da CEO", ChannelKind.PHYSICAL,
+                          building="NYX", room="sala da CEO")
+        service = GeminiService("fake-key", "gemini-3.5-flash-lite")
+        with patch.object(service, "_request", return_value='{"action":"move","destination":3,"text":"Cheguei."}'):
+            self.assertEqual(asyncio.run(service.decide_activity(
+                character=olivia, location=reception, destinations=(office,), world=WorldState(1)
+            )), ("move", 3, "Cheguei."))
+        with patch.object(service, "_request", return_value='{"action":"move","destination":999,"text":"Cheguei."}'):
+            with self.assertRaises(AIError):
+                asyncio.run(service.decide_activity(
+                    character=olivia, location=reception, destinations=(office,), world=WorldState(1)
+                ))
+
     def test_gemini_uses_character_context_and_parses_reply(self):
         olivia = next(c for c in initial_characters() if c.character_id == "olivia-bennett")
         location = Location(1, 2, None, "NYX", "recepção", ChannelKind.PHYSICAL,

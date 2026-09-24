@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 from dataclasses import replace
@@ -57,6 +58,7 @@ def create_bot(settings: Settings):
             self.location_by_channel: dict[int, object] = {}
             self._sleep_notice_channels: set[int] = set()
             self._active_conversations: dict[tuple[int, int], tuple[str, float]] = {}
+            self._routine_task: asyncio.Task | None = None
 
         async def setup_hook(self) -> None:
             await self.world_service.initialize(
@@ -87,6 +89,67 @@ def create_bot(settings: Settings):
             await self.world_service.sync_map(locations)
             self.location_by_channel = {item.channel_id: item for item in locations}
             logger.info("Mapa sincronizado: %d canais reconhecidos.", len(locations))
+            if self._routine_task is None or self._routine_task.done():
+                self._routine_task = asyncio.create_task(self._npc_routine())
+
+        async def close(self) -> None:
+            if self._routine_task:
+                self._routine_task.cancel()
+                try:
+                    await self._routine_task
+                except asyncio.CancelledError:
+                    pass
+            await super().close()
+
+        async def _npc_routine(self) -> None:
+            # Apenas um NPC por ciclo: limita mensagens e chamadas à IA.
+            await asyncio.sleep(300)
+            while not self.is_closed():
+                try:
+                    await self._npc_turn()
+                except Exception:
+                    logger.exception("Falha na rotina autônoma dos NPCs")
+                await asyncio.sleep(900)
+
+        async def _npc_turn(self) -> None:
+            if not self.ai_service.enabled:
+                return
+            world = await self.world_service.world()
+            if world.city_status != CityStatus.ACTIVE:
+                return
+            locations = tuple(place for place in self.location_by_channel.values()
+                              if place.kind == ChannelKind.PHYSICAL
+                              and self.get_channel(place.channel_id) is not None)
+            if not locations:
+                return
+            by_key = {place.location_key: place for place in locations}
+            eligible = [person for person in await self.store.list_characters()
+                        if person.actor_kind == ActorKind.AI and person.current_location_key in by_key]
+            if not eligible:
+                return
+            character = random.choice(eligible)
+            current = by_key[character.current_location_key]
+            destinations = tuple(place for place in locations if place.channel_id != current.channel_id)
+            if len(destinations) > 12:
+                destinations = tuple(random.sample(destinations, 12))
+            memory = await self.store.list_memories(character.character_id, limit=4)
+            action, destination_id, speech = await self.ai_service.decide_activity(
+                character=character, location=current, destinations=destinations,
+                world=world, recent_memory=memory,
+            )
+            if action == "stay":
+                return
+            target = (next(place for place in destinations if place.channel_id == destination_id)
+                      if action == "move" else current)
+            if action == "move":
+                # Um único current_location_key é gravado antes de falar no destino.
+                character = replace(character, current_location_key=target.location_key,
+                                    activity=f"presente em {target.room}")
+                await self.store.save_character(character)
+            if speech:
+                channel = self.get_channel(target.channel_id)
+                payload = self.webhook_service.build_payload(character, target, speech)
+                await self.webhook_service.send(channel, payload)
 
         async def on_message(self, message) -> None:
             if message.author.bot or message.webhook_id or not message.guild:

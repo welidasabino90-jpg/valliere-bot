@@ -30,6 +30,41 @@ class GroqService:
     def enabled(self) -> bool:
         return bool(self.api_key)
 
+    async def decide_activity(
+        self, *, character: Character, location: Location, destinations: tuple[Location, ...],
+        world: WorldState, recent_memory: tuple[str, ...] = (),
+    ) -> tuple[str, int, str]:
+        """Return a constrained fictional action; never execute it here."""
+        profile = character.profile or {}
+        choices = ", ".join(f"{place.channel_id}: {place.building}/{place.room}" for place in destinations)
+        system = (
+            f"Você decide a próxima ação cotidiana de {character.display_name}, personagem fictícia. "
+            f"Profissão: {profile.get('profession', '')}. Personalidade: {profile.get('personality', '')}. "
+            f"Local atual: {location.building}/{location.room}. Período: {world.period.value}. "
+            f"Memórias: {'; '.join(recent_memory[-4:])[:800]}. "
+            "Escolha ficar, falar brevemente ou andar até uma sala disponível. "
+            "Não invente ações de humanos, recados enviados, reuniões marcadas ou tarefas concluídas. "
+            "Sua fala deve ser curta, natural e independente; não convide alguém sem contexto. "
+            "Responda SOMENTE JSON: {\"action\":\"stay|speak|move\",\"destination\":0,\"text\":\"\"}. "
+            "Para move, destination deve ser o número da sala e text pode ser uma fala curta ao chegar. "
+            "Para speak, destination deve ser 0. Para stay, text deve ser vazio."
+        )
+        raw = await asyncio.to_thread(self._request, system, f"Salas disponíveis: {choices}")
+        try:
+            data = json.loads(raw.strip().removeprefix('```json').removeprefix('```').removesuffix('```').strip())
+            action = data['action']
+            destination = data['destination']
+            message = data['text']
+            if action not in ('stay', 'speak', 'move') or type(destination) is not int or not isinstance(message, str):
+                raise ValueError('atividade inválida')
+            if action == 'move' and destination not in {place.channel_id for place in destinations}:
+                raise ValueError('destino inválido')
+            if action != 'move' and destination != 0:
+                raise ValueError('destino inesperado')
+            return action, destination, message.strip()[:600] if action != 'stay' else ''
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise AIError('A decisão de rotina veio em formato inválido.') from exc
+
     async def reply(
         self,
         *,
