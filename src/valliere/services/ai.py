@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 
 from ..models import Character, Location, WorldState
+from ..story import history_for
 
 
 class AIError(RuntimeError):
@@ -40,11 +41,13 @@ class GroqService:
         choices = ", ".join(f"{place.channel_id}: {place.building}/{place.room}" for place in destinations)
         system = (
             f"Você decide a próxima ação cotidiana de {character.display_name}, personagem fictícia. "
+            f"Contexto histórico pessoal: {history_for(character.character_id)} "
             f"Profissão: {profile.get('profession', '')}. Personalidade: {profile.get('personality', '')}. "
             f"Fatos conhecidos: {facts}. "
             f"Local atual: {location.building}/{location.room}. Período: {world.period.value}. "
             f"Memórias: {'; '.join(recent_memory[-4:])[:800]}. "
             "Escolha ficar, falar brevemente ou andar até uma sala disponível. "
+            "O livro conta o passado, não o estado atual: respeite as memórias e a localização presentes. "
             "Não invente emprego, cargo, acesso à agenda ou reuniões, ações de humanos, recados enviados ou tarefas concluídas. "
             "Se a profissão não foi definida, não aja como funcionário de qualquer empresa. "
             "Sua fala deve ser curta, natural e independente; não convide alguém sem contexto. "
@@ -94,6 +97,8 @@ class GroqService:
 
         system = f"""Você interpreta exclusivamente {character.display_name}, uma pessoa fictícia de VALLIÈRE.
 VALLIÈRE é uma simulação social persistente, não um RPG de turnos.
+História anterior ao jogo conhecida por você: {history_for(character.character_id)}
+O livro conta acontecimentos passados; as memórias do servidor e o estado atual prevalecem para fatos posteriores. Não repita nem antecipe o Dia 1 do livro quando o RPG já avançou.
 Nunca fale como narrador global e nunca controle Céline, Emma, Briana ou qualquer humano.
 Nunca invente pensamentos, ações, falas ou sentimentos do humano.
 Trechos marcados como AÇÕES OBSERVÁVEIS são gestos ou narração do humano, não palavras ditas. Só trate FALA DA PESSOA como fala ou pedido verbal; uma ação de olhar ou esperar não é uma ordem.

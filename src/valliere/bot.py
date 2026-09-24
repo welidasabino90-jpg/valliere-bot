@@ -31,6 +31,7 @@ def create_bot(settings: Settings):
     from .services.ai import AIError, GeminiService, GroqService
     from .services.webhooks import WebhookService
     from .services.roleplay import split_roleplay
+    from .services.visits import may_enter_from_message
     from .services.world import DomainError, WorldService
     from .stores.supabase import SupabaseStore
 
@@ -278,6 +279,7 @@ def create_bot(settings: Settings):
                       )))]
             invited = [item for item in characters if item.actor_kind == ActorKind.AI
                        and item not in present
+                       and may_enter_from_message(location.building, speech)
                        and re.match(rf"^\s*{re.escape(item.display_name.casefold().split()[0])}(?!\w)[,!.?\s]", normalized)]
             addressed = [item for item in present if name_in_text(item)]
             conversation_key = (message.channel.id, message.author.id)
@@ -367,7 +369,7 @@ def create_bot(settings: Settings):
                     )
                 payload = self.webhook_service.build_payload(character, location, reply)
                 await self.webhook_service.send(message.channel, payload)
-                if recipient and re.search(r"\b(?:venha|vir|venha\s+até|passe)\b", normalized) and re.search(
+                if recipient and may_enter_from_message(location.building, speech) and re.search(r"\b(?:venha|vir|venha\s+até|passe)\b", normalized) and re.search(
                     r"\b(?:minha\s+sala|sala\s+da\s+céline|sala\s+da\s+celine)\b", normalized
                 ):
                     asyncio.create_task(bot._deliver_visit(recipient.character_id, location,
@@ -423,6 +425,19 @@ def create_bot(settings: Settings):
             )
         embed.set_footer(text="A localização das pessoas não é revelada pelo /status.")
         return embed
+
+    @bot.tree.command(name="historia", description="Leia o Livro Zero antes de entrar em VALLIÈRE.")
+    async def historia(interaction):
+        if interaction.guild_id != settings.discord_guild_id:
+            await interaction.response.send_message("Este comando pertence a VALLIÈRE.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "**VALLIÈRE — Livro Zero: Antes de Tudo**\n"
+            "https://github.com/welidasabino90-jpg/valliere-bot/blob/main/HISTORIA.md\n\n"
+            "A história termina antes da primeira escolha. Céline, Emma e Briana "
+            "continuam sob controle das jogadoras.",
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="cidadeacorda", description="Retoma VALLIÈRE em uma nova manhã.")
     async def cidadeacorda(interaction):
