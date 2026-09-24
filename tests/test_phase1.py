@@ -13,12 +13,23 @@ from valliere.catalog import initial_characters
 from valliere.map import classify_channel
 from valliere.models import ActorKind, ChannelKind, CityStatus, DayPeriod, Location
 from valliere.services.webhooks import WebhookError, WebhookService
+from valliere.services.roleplay import split_roleplay
 from valliere.services.world import DomainError, WorldService
 from valliere.stores.memory import MemoryStore
 
 
 def run(coro):
     return asyncio.run(coro)
+
+
+class RoleplayTests(unittest.TestCase):
+    def test_actions_are_not_spoken_requests(self):
+        actions, speech = split_roleplay("**Olho para Noah e pego o telefone** Olivia, avise ao Noah que espero na sala.")
+        self.assertEqual(actions, "Olho para Noah e pego o telefone")
+        self.assertEqual(speech, "Olivia, avise ao Noah que espero na sala.")
+
+    def test_only_action_has_no_spoken_words(self):
+        self.assertEqual(split_roleplay("**aguardando Noah**"), ("aguardando Noah", ""))
 
 
 class MapTests(unittest.TestCase):

@@ -30,6 +30,7 @@ def create_bot(settings: Settings):
     from .models import ActorKind, ChannelKind, CityStatus
     from .services.ai import AIError, GeminiService, GroqService
     from .services.webhooks import WebhookService
+    from .services.roleplay import split_roleplay
     from .services.world import DomainError, WorldService
     from .stores.supabase import SupabaseStore
 
@@ -262,15 +263,19 @@ def create_bot(settings: Settings):
             ]
             # Uma pessoa pode chamar um NPC de outra sala diretamente neste
             # canal. O local persistido é trocado antes de a pessoa responder.
-            normalized = message.content.casefold()
+            actions, speech = split_roleplay(message.content)
+            normalized = speech.casefold()
+            action_text = actions.casefold()
             def name_in_text(person) -> bool:
                 names = [person.display_name.casefold().split()[0]]
                 if person.character_id == "nathan":
                     names.extend(("natam", "natham"))
                 return any(re.search(rf"(?<!\w){re.escape(name)}(?!\w)", normalized) for name in names)
-            is_phone_call = any(word in normalized for word in ("ligo", "telefone", "ramal", "chamada"))
+            is_phone_call = bool(re.search(r"\b(?:ligo|telefone|ramal|chamada)\b", normalized + " " + action_text))
             called = [item for item in characters if item.actor_kind == ActorKind.AI
-                      and name_in_text(item)]
+                      and (name_in_text(item) or (is_phone_call and re.search(
+                          rf"(?<!\w){re.escape(item.display_name.casefold().split()[0])}(?!\w)", action_text
+                      )))]
             invited = [item for item in characters if item.actor_kind == ActorKind.AI
                        and item not in present
                        and re.match(rf"^\s*{re.escape(item.display_name.casefold().split()[0])}(?!\w)[,!.?\s]", normalized)]
@@ -283,7 +288,7 @@ def create_bot(settings: Settings):
                 character = min(called, key=lambda item: normalized.find(item.display_name.casefold().split()[0]))
             elif addressed:
                 character = addressed[0]
-            elif continuing:
+            elif continuing and (speech or name_in_text(continuing)):
                 character = continuing
             elif invited:
                 character = invited[0]
@@ -291,7 +296,7 @@ def create_bot(settings: Settings):
                 item.character_id == "olivia-bennett" for item in present
             ):
                 character = next(item for item in present if item.character_id == "olivia-bennett")
-            elif len(present) == 1 and message.content.strip() and not (location.room or "").casefold().startswith("sala-"):
+            elif len(present) == 1 and (speech or actions) and not (location.room or "").casefold().startswith("sala-"):
                 character = present[0]
             else:
                 character = None
@@ -334,7 +339,7 @@ def create_bot(settings: Settings):
                         if re.search(rf"\b(?:diga|avise|mande\s+(?:uma\s+)?mensagem)\s+(?:ao|a|para\s+o)\s+{first_name}\b", normalized):
                             await self.store.add_memory(
                                 receiver.character_id,
-                                f"Recado de {message.author.display_name} transmitido por {character.display_name}: {message.content}",
+                                f"Recado falado por {message.author.display_name} e transmitido por {character.display_name}: {speech}",
                                 source_character_id=character.character_id,
                                 location_key=character.current_location_key,
                                 importance=2,
@@ -353,8 +358,10 @@ def create_bot(settings: Settings):
                               if remote_call else location),
                     world=state,
                     human_name=message.author.display_name,
-                    human_message=(f"Você está atendendo pelo telefone, sem estar fisicamente nesta sala. {message.content}"
-                                   if remote_call else message.content),
+                    human_message=(f"CONTEXTO: você atende pelo telefone, sem estar fisicamente nesta sala.\n"
+                                   if remote_call else "")
+                                  + f"AÇÕES OBSERVÁVEIS (não são falas nem ordens): {actions or 'nenhuma'}\n"
+                                    f"FALA DA PESSOA: {speech or 'nenhuma'}",
                     recent_memory=memories,
                     completed_action=completed_action,
                     )
@@ -368,7 +375,8 @@ def create_bot(settings: Settings):
                 self._active_conversations[conversation_key] = (character.character_id, time.monotonic() + 600)
                 await self.store.add_memory(
                     character.character_id,
-                    f"{message.author.display_name} disse: {message.content}",
+                    (f"{message.author.display_name} fez: {actions}. " if actions else "")
+                    + (f"{message.author.display_name} disse: {speech}" if speech else ""),
                     source_character_id=f"discord:{message.author.id}",
                     location_key=location.location_key,
                     importance=1,
