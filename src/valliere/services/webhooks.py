@@ -28,6 +28,21 @@ class WebhookService:
             content=cleaned,
         )
 
+    @staticmethod
+    def build_phone_payload(character: Character, content: str, mode: str) -> WebhookPayload:
+        if character.actor_kind != ActorKind.AI:
+            raise WebhookError("Personagens humanas não podem receber falas geradas pela IA.")
+        label = "ligação" if mode == "celular" else "mensagem"
+        cleaned = content.strip()[:1800]
+        if not cleaned:
+            raise WebhookError("A resposta do celular está vazia.")
+        return WebhookPayload(
+            character_id=character.character_id,
+            username=character.display_name,
+            avatar_url=character.avatar_url,
+            content=f"📱 **{label}** — {cleaned}",
+        )
+
     async def send(self, channel: object, payload: WebhookPayload) -> None:
         """Cria/reutiliza um webhook do local sem persistir o token no banco."""
         webhooks = await channel.webhooks()  # type: ignore[attr-defined]

@@ -67,7 +67,32 @@ class WorldService:
             city_status=CityStatus.ACTIVE,
         )
         await self.store.save_world(state)
+        await self._start_workday(state)
         return state
+
+    async def _start_workday(self, state: WorldState) -> None:
+        if state.day_label in ("SÁBADO", "DOMINGO"):
+            return
+        locations = await self.store.list_locations(self.guild_id)
+        agency = [place for place in locations if place.kind == ChannelKind.PHYSICAL
+                  and place.building == "NYX Agency & Atelier"]
+        shifts = {
+            "olivia-bennett": "recepção",
+            "noah-carter": "casting",
+            "camille-moreau": "lounge",
+            "theo-beaumont": "atelier",
+            "gabriel-torres": "entrada",
+        }
+        for person in await self.store.list_characters():
+            room = shifts.get(person.character_id)
+            if person.actor_kind != ActorKind.AI or not room:
+                continue
+            destination = next((place for place in agency if room in (place.room or "").casefold()), None)
+            if destination and person.current_location_key != destination.location_key:
+                await self.store.save_character(replace(
+                    person, current_location_key=destination.location_key,
+                    activity=f"trabalhando em {destination.room}",
+                ))
 
     async def advance_time(self) -> WorldState:
         state = await self.world()
@@ -77,6 +102,20 @@ class WorldService:
             raise DomainError("A madrugada chegou. Encerre o dia com /cidadedorme.")
         state = state.evolved(period=state.period.next())
         await self.store.save_world(state)
+        if state.period == DayPeriod.NIGHT:
+            locations = await self.store.list_locations(self.guild_id)
+            noir = [place for place in locations if place.kind == ChannelKind.PHYSICAL
+                    and place.building == "NOIR"]
+            for person in await self.store.list_characters():
+                if person.character_id not in ("matteo-ricci", "sofia-bellini"):
+                    continue
+                room = "escritório" if person.character_id == "matteo-ricci" else "bar"
+                destination = next((place for place in noir if room in (place.room or "").casefold()), None)
+                if destination and person.current_location_key != destination.location_key:
+                    await self.store.save_character(replace(
+                        person, current_location_key=destination.location_key,
+                        activity=f"trabalhando em {destination.room}",
+                    ))
         return state
 
     async def sleep_city(self) -> WorldState:
