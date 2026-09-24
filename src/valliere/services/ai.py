@@ -218,8 +218,17 @@ class GeminiService(GroqService):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=25) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            for attempt in range(4):
+                try:
+                    with urllib.request.urlopen(req, timeout=25) as response:
+                        body = json.loads(response.read().decode("utf-8"))
+                    break
+                except urllib.error.HTTPError as retry_exc:
+                    if retry_exc.code not in (429, 500, 502, 503, 504) or attempt == 3:
+                        raise
+                    retry_exc.read(4096)
+                    import time
+                    time.sleep(2 ** attempt)
         except urllib.error.HTTPError as exc:
             # Preserve only the status and a small machine-readable code.
             raw = exc.read(4096).decode("utf-8", errors="replace")
